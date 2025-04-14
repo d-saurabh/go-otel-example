@@ -60,15 +60,16 @@ func MetricsMiddleware(counter metric.Int64Counter, histogram metric.Float64Hist
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+			// Call the next handler in the chain
+			next.ServeHTTP(ww, r)
+
 			// Extract the normalized route pattern from the Chi router
 			routePattern := chi.RouteContext(r.Context()).RoutePattern()
 			if routePattern == "" {
 				// Fallback to the raw path if no route pattern is found
 				routePattern = r.URL.Path
 			}
-
-			// Call the next handler in the chain
-			next.ServeHTTP(ww, r)
 
 			// Calculate the duration of the request
 			duration := time.Since(start).Seconds()
