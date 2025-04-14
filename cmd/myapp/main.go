@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"opentelemetry-api/internal/handlers"
 	"opentelemetry-api/internal/tracing"
 	"os"
 	"os/signal"
@@ -16,7 +17,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"opentelemetry-api/internal/handlers"
 	"opentelemetry-api/internal/metrics"
 	m "opentelemetry-api/internal/middleware"
 )
@@ -63,6 +63,10 @@ func main() {
 
 	// Set up router
 	r := chi.NewRouter()
+
+	// Use OpenTelemetry middleware for HTTP tracing
+	r.Use(otelhttp.NewMiddleware(serviceName))
+
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
@@ -80,7 +84,7 @@ func main() {
 	// 3. No per-route setup needed
 	// Use otelhttp and pull chi route pattern for span name
 	wrappedHandler := otelhttp.NewHandler(r, "",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+		otelhttp.WithSpanNameFormatter(func(operation string, r *http.Request) string {
 			// Extract the normalized route pattern from the Chi router
 			routePattern := chi.RouteContext(r.Context()).RoutePattern()
 			if routePattern == "" {
