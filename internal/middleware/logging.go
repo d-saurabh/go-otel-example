@@ -28,15 +28,15 @@ func LoggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 			// Wrap the response writer to capture status code and size
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 
+			// Call the next handler in the chain
+			next.ServeHTTP(ww, r)
+
 			// Extract the normalized route pattern from the Chi router
 			routePattern := chi.RouteContext(r.Context()).RoutePattern()
 			if routePattern == "" {
 				// Fallback to the raw path if no route pattern is found
 				routePattern = r.URL.Path
 			}
-
-			// Call the next handler in the chain
-			next.ServeHTTP(ww, r)
 
 			// Calculate the duration of the request
 			duration := time.Since(start)
