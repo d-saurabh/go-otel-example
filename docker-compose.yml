@@ -1,0 +1,108 @@
+version: '3.7'
+
+services:
+  opentelemetry-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    ports:
+      - "4317:4317"  # Ensure this is exposed
+      - "4318:4318"  # Add this line for OTLP/HTTP support
+      - "9091:9090"
+    volumes:
+      - ./configs/otel-collector-config.yaml:/etc/otel-collector-config.yaml  # Mount config file
+    command:
+      - "--config=/etc/otel-collector-config.yaml"  # Specify config file location
+    networks:
+      - monitoring
+
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.42.0  # Updated version
+    container_name: prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - monitoring
+
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    restart: always
+    ports:
+      - "9411:9411" # Zipkin UI and API
+    networks:
+      - monitoring
+
+  my-app:
+    build: .
+    container_name: my-app
+    labels:
+      promtail_scrape: "true"
+      app: "my-app"
+    ports:
+      - "8080:8080"  # Exposing the Go app on port 8080
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317  # Endpoint for OpenTelemetry Collector
+      - SERVICE_NAME=my-app
+      - REQUEST_COUNTER_NAME=http_requests_total
+      - REQUEST_DURATION_NAME=http_request_duration_seconds
+    depends_on:
+      - opentelemetry-collector  # Ensure the OpenTelemetry Collector starts before the app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - monitoring
+
+  loki:
+    image: grafana/loki:2.9.1
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - monitoring
+
+  promtail:
+    image: grafana/promtail:2.9.1
+    volumes:
+      - /var/log:/var/log
+      - ./configs/promtail-config.yaml:/etc/promtail/promtail-config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /etc/machine-id:/etc/machine-id
+      - /run/promtail:/run/promtail
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    depends_on:
+      - loki
+    networks:
+      - monitoring      
+
+# Grafana (for visualizing logs and metrics)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: always
+    ports:
+      - "3000:3000"  # Grafana UI
+    volumes:
+      - ./configs/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      - opentelemetry-collector
+      - loki
+
+networks:
+  monitoring:
+    driver: bridge
