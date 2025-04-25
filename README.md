@@ -13,6 +13,96 @@ The goal of this project is to help developers understand how to:
 
 ---
 
+## Observability Concepts
+
+### Traces
+
+Traces represent the lifecycle of a request as it flows through the application. Each trace consists of spans, which are individual units of work (e.g., HTTP requests, database queries).
+
+```plaintext
+
+[ HTTP Request Received ]
+           │
+           ▼
+[ Start Root Span (otelhttp) ]
+           │
+           ▼
+[ Handler Execution ]
+           │
+           ▼
+[ Start Child Span (e.g., DB Query) ]
+           │
+           ▼
+[ End Child Span ]
+           │
+           ▼
+[ End Root Span ]
+```
+
+**Gotchas**
+- Avoid Over-Instrumentation
+  Instrument only critical paths (e.g., HTTP handlers, DB queries). Instrumenting every function can lead to high costs and noisy data.
+
+- Sampling 
+  Use sampling strategies (e.g., probabilistic sampling) to reduce the volume of traces sent to the backend.
+
+- Span Attributes 
+  Limit the number of attributes per span to avoid bloating telemetry data.
+
+### Metrics
+
+Metrics provide aggregated data about the system's performance, such as request counts, latencies, and error rates.
+
+```plaintext
+
+[ HTTP Request Received ]
+           │
+           ▼
+[ Record Metrics ]
+  - Request Count
+  - Request Duration
+  - Error Count
+           │
+           ▼
+[ Export Metrics to Backend ]
+```
+
+**Gotchas**
+- Cardinality Explosion
+  Avoid high-cardinality labels (e.g., user IDs, session IDs) in metrics. Use aggregated labels like status_code or endpoint.
+- Granularity
+  Choose an appropriate granularity for metrics. Too fine-grained metrics can increase storage costs.
+- Aggregation
+  Use pre-aggregated metrics (e.g., histograms) to reduce the volume of data sent to the backend.
+
+### Logs
+
+Logs capture detailed information about application events, such as errors, warnings, and debug messages.
+
+```plaintext
+[ Application Event ]
+           │
+           ▼
+[ Generate Log Entry ]
+  - Timestamp
+  - Log Level (INFO, ERROR, etc.)
+  - Message
+  - Context (e.g., traceID, spanID)
+           │
+           ▼
+[ Export Logs to Backend ]
+```
+
+**Gotchas**
+
+- Log Levels
+  Use appropriate log levels (e.g., DEBUG for development, INFO for production). Avoid excessive DEBUG logs in production.
+- Structured Logging
+  Use structured logs (e.g., JSON) to make logs easier to query and correlate with traces.
+- Retention Policies
+  Configure log retention policies to avoid excessive storage costs.
+
+
 ## **How to Run the Application**
 
 Follow these steps to run the application and the observability stack using Docker Compose:
@@ -20,7 +110,7 @@ Follow these steps to run the application and the observability stack using Dock
 1. **Clone the Repository**:
 
 ```bash
-   git clone https://github.com/your-repo/observability.git
+   git clone https://github.com/d-saurabh/observability.git
    cd observability
 
 ---
@@ -31,6 +121,7 @@ Run the following command to build the Go application and start all services:
 
 ```bash
     docker-compose up --build
+```
 
 - This will start:
     - The Go application (my-app).
@@ -45,12 +136,13 @@ Check if all services are running:
 ```bash
 
     docker ps
-
+```
 ---
 
 4. **Verify the Logging BE ready**:
 ```bash
     curl http://localhost:3100/ready
+```
 
 This will check if the loki is running up, wait for sometime till this reponds with `ready`
 
@@ -60,7 +152,8 @@ This will check if the loki is running up, wait for sometime till this reponds w
 
 Use curl or a browser to send a request to the application:
 ```bash
-    curl http://localhost:8080/hello
+    curl http://localhost:8080/hello/1
+```
 
 ---
 
@@ -132,7 +225,7 @@ Once the application and observability stack are running, you can visualize the 
 To stop the application and all services, run:
 ```bash
     docker-compose down
-
+```
 
 ## **Architecture Diagram**
 
@@ -205,3 +298,4 @@ Below is the architecture of the observability setup:
                    │ Export Telemetry Data  │
                    │ to Observability Backend│
                    └────────────────────────┘
+```

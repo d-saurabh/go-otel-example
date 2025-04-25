@@ -27,7 +27,7 @@ func main() {
 		zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
 		zapcore.Lock(os.Stdout), // important: stdout for container logs
 		zapcore.InfoLevel,
-	))
+	), zap.AddCaller())
 	defer logger.Sync()
 	// Read configuration from environment variables
 	otelEndpoint := getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317")
