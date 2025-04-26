@@ -13,6 +13,8 @@ The goal of this project is to help developers understand how to:
 
 ---
 
+![Demo](demo.gif)
+
 ## Observability Concepts
 
 ### Traces
