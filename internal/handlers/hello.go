@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"opentelemetry-api/internal/metrics"
 	"opentelemetry-api/internal/middleware"
 	"time"
 
@@ -54,18 +53,16 @@ func HelloHandler(w http.ResponseWriter, r *http.Request) {
 		attribute.String("user_role", "admin"), // Example: user role attribute
 		attribute.String("custom", "example"),
 	}
+	middleware.AddMetricAttributes(ctx, customAttrs...)
 
 	// Retrieve the LoggingContext
-	loggingContext, _ := middleware.GetLoggingContext(r.Context())
+	loggingContext := middleware.GetLoggingContext(ctx)
 	// Add custom attributes
 	loggingContext.AddAttribute("user_id", 12345)
 	loggingContext.AddAttribute("custom_key", "custom_value")
 
 	// Set the log level to Info
-	ctx = middleware.WithLogLevel(r.Context(), zap.InfoLevel)
-
-	ctx = metrics.AddMeretricAttributes(ctx, customAttrs...)
-	r = r.WithContext(ctx) // Propagate the updated context to the request
+	ctx = middleware.WithLogLevel(ctx, zap.InfoLevel)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Hello, OpenTelemetry!"))

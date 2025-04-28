@@ -19,13 +19,13 @@ func TracingMiddleware(tracer trace.Tracer) func(http.Handler) http.Handler {
 			traceID := span.SpanContext().TraceID().String()
 			spanID := span.SpanContext().SpanID()
 			// Retrieve the LoggingContext
-			loggingContext, ctx := GetLoggingContext(r.Context())
+			loggingContext := GetLoggingContext(r.Context())
 			// Add custom attributes
 			loggingContext.AddAttribute("trace_id", traceID)
 			loggingContext.AddAttribute("span_id", spanID)
 
 			// Pass the updated context to the next handler
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r)
 
 			// Extract the normalized route pattern from the Chi router
 			routePattern := chi.RouteContext(r.Context()).RoutePattern()

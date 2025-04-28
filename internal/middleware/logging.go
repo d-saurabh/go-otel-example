@@ -56,15 +56,20 @@ func LoggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 				zap.String("user_agent", r.UserAgent()),
 			}
 			// Retrieve or initialize the LoggingContext
-			loggingContext, newCtx := GetLoggingContext(r.Context())
-			r = r.WithContext(newCtx) // Update the request with the new context
+			loggingContext := GetLoggingContext(r.Context())
 
-			// Flatten the attributes map and add each key-value pair as a separate field
-			loggingContext.IterateAttributes(func(key, value interface{}) {
-				if keyStr, ok := key.(string); ok {
-					logFields = append(logFields, zap.Any(keyStr, value))
-				}
-			})
+			// Add attributes from the context if it exists
+			if loggingContext != nil {
+				// Flatten the attributes map and add each key-value pair as a separate field
+				loggingContext.IterateAttributes(func(key, value interface{}) {
+					if keyStr, ok := key.(string); ok {
+						logFields = append(logFields, zap.Any(keyStr, value))
+					}
+				})
+			} else {
+				// Log a warning if the context was missing - indicates middleware setup issue
+				logger.Warn("LoggingContext not found in request context", zap.String("request_id", requestID))
+			}
 
 			// Extract log level from the context (default to "info")
 			logLevel := r.Context().Value(LogLevelKey)
@@ -121,14 +126,12 @@ func (lc *LoggingContext) IterateAttributes(f func(key, value any)) {
 
 // GetLoggingContext retrieves the LoggingContext from the request context.
 // If it doesn't exist, it creates a new LoggingContext, stores it in the context, and returns it.
-func GetLoggingContext(ctx context.Context) (*LoggingContext, context.Context) {
+func GetLoggingContext(ctx context.Context) *LoggingContext {
 	if lc, ok := ctx.Value(LoggingContextKey).(*LoggingContext); ok {
-		return lc, ctx
+		return lc
 	}
-	// Lazily create a new LoggingContext and store it in the context
-	lc := &LoggingContext{}
-	newCtx := context.WithValue(ctx, LoggingContextKey, lc)
-	return lc, newCtx
+	// Return nil if not found. Consider logging an error here if it *should* always exist.
+	return nil
 }
 
 func InitializeLoggingContext(next http.Handler) http.Handler {

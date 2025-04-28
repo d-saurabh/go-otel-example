@@ -70,7 +70,8 @@ func main() {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	// Add the InitializeLoggingContext middleware
+	// Add the InitializeLoggingContext and InitializeMetricsContext middleware
+	r.Use(m.InitializeMetricsContext)
 	r.Use(m.InitializeLoggingContext)
 	r.Use(m.TracingMiddleware(tp.Tracer(serviceName)))
 	r.Use(m.MetricsMiddleware(metrics.RequestCounter, metrics.RequestDuration, logger))
