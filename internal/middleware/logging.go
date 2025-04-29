@@ -103,41 +103,74 @@ func WithLogLevel(ctx context.Context, level zapcore.Level) context.Context {
 
 // LoggingContext holds custom attributes for logging using sync.Map.
 type LoggingContext struct {
-	Attributes sync.Map
+	mu         sync.RWMutex           // Read-Write Mutex
+	attributes map[string]interface{} // Standard Go map
 }
 
-// AddAttribute adds a custom attribute to the LoggingContext.
+// newLoggingContext creates an initialized LoggingContext.
+func newLoggingContext() *LoggingContext {
+	return &LoggingContext{
+		attributes: make(map[string]interface{}),
+		// mu is zero-valued and ready to use
+	}
+}
+
+// AddAttribute adds a custom attribute to the LoggingContext. (Write operation)
 func (lc *LoggingContext) AddAttribute(key string, value interface{}) {
-	lc.Attributes.Store(key, value)
+	lc.mu.Lock()         // Acquire exclusive write lock
+	defer lc.mu.Unlock() // Ensure lock is released
+	// Initialize map if it's nil (important if LoggingContext was created as zero value elsewhere)
+	if lc.attributes == nil {
+		lc.attributes = make(map[string]interface{})
+	}
+	lc.attributes[key] = value
 }
 
-// GetAttribute retrieves a custom attribute from the LoggingContext.
+// GetAttribute retrieves a custom attribute from the LoggingContext. (Read operation)
+// Note: Less commonly needed if IterateAttributes is the primary read path.
 func (lc *LoggingContext) GetAttribute(key string) (interface{}, bool) {
-	return lc.Attributes.Load(key)
+	lc.mu.RLock()         // Acquire shared read lock
+	defer lc.mu.RUnlock() // Ensure lock is released
+	if lc.attributes == nil {
+		return nil, false
+	}
+	value, ok := lc.attributes[key]
+	return value, ok
 }
 
-// IterateAttributes iterates over all attributes in the LoggingContext.
+// IterateAttributes iterates over all attributes in the LoggingContext. (Read operation)
 func (lc *LoggingContext) IterateAttributes(f func(key, value any)) {
-	lc.Attributes.Range(func(key, value any) bool {
+	lc.mu.RLock()         // Acquire shared read lock
+	defer lc.mu.RUnlock() // Ensure lock is released
+
+	// Iterate over a copy of the map keys or the map itself while holding the read lock.
+	// Iterating directly is safe as long as the callback 'f' doesn't try to write back
+	// to this LoggingContext concurrently (which would cause deadlock).
+	for key, value := range lc.attributes {
 		f(key, value)
-		return true // Continue iteration
-	})
+	}
 }
 
 // GetLoggingContext retrieves the LoggingContext from the request context.
-// If it doesn't exist, it creates a new LoggingContext, stores it in the context, and returns it.
+// Assumes InitializeLoggingContext middleware has run.
 func GetLoggingContext(ctx context.Context) *LoggingContext {
-	if lc, ok := ctx.Value(LoggingContextKey).(*LoggingContext); ok {
+	if lc, ok := ctx.Value(LoggingContextKey).(*LoggingContext); ok && lc != nil {
 		return lc
 	}
-	// Return nil if not found. Consider logging an error here if it *should* always exist.
 	return nil
 }
 
+// InitializeLoggingContext ensures a LoggingContext is added to the request context.
 func InitializeLoggingContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Create a new LoggingContext and store it in the request context
-		ctx := context.WithValue(r.Context(), LoggingContextKey, &LoggingContext{})
-		next.ServeHTTP(w, r.WithContext(ctx))
+		// Check if it already exists
+		if r.Context().Value(LoggingContextKey) == nil {
+			// Create a new LoggingContext using the constructor
+			lc := newLoggingContext() // Use the constructor
+			ctx := context.WithValue(r.Context(), LoggingContextKey, lc)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		} else {
+			next.ServeHTTP(w, r)
+		}
 	})
 }
