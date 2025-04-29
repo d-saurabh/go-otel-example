@@ -21,18 +21,18 @@ type key int
 // Define a custom key type for storing attributes in the context
 const metricAttributesKey key = 0
 
-// MetricContext holds custom attributes for metrics using sync.Map.
+// MetricContext holds custom attributes for metrics using a standard map protected by a RWMutex.
 type MetricContext struct {
-	Attributes sync.Map
+	mu         sync.RWMutex               // Read-Write Mutex
+	attributes map[string]attribute.Value // Standard Go map (Key: string, Value: attribute.Value)
 }
 
-func InitializeMetricsContext(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Create and store the MetricContext at the beginning
-		mc := new(MetricContext) // sync.Map is ready
-		ctx := context.WithValue(r.Context(), metricAttributesKey, mc)
-		next.ServeHTTP(w, r.WithContext(ctx)) // Pass request with context down
-	})
+// newMetricContext creates an initialized MetricContext.
+func newMetricContext() *MetricContext {
+	return &MetricContext{
+		attributes: make(map[string]attribute.Value),
+		// mu is zero-valued and ready to use
+	}
 }
 
 // MetricsMiddleware is an HTTP middleware that collects and records metrics for incoming HTTP requests.
@@ -121,81 +121,92 @@ func MetricsMiddleware(counter metric.Int64Counter, histogram metric.Float64Hist
 	}
 }
 
-// GetMetricsContext retrieves the MetricsContext from the request context.
-// If it doesn't exist, it performs lazy initialization: creates a new MetricsContext,
-// stores it in a new derived context, and returns both the context object
-// and the new derived context.
-//
-// Parameters:
-//   - ctx: The current context.
-//
-// Returns:
-//   - *MetricsContext: A pointer to the MetricsContext (never nil).
-//   - context.Context: The potentially updated context (if lazy initialization occurred).
-func GetMetricsContext(ctx context.Context) *MetricContext {
-	if mc, ok := ctx.Value(metricAttributesKey).(*MetricContext); ok {
-		return mc
-	}
-	// Return nil if not found (indicates middleware wasn't run correctly)
-	// Optionally log an error here
-	return nil
-}
-
-// AddAttributes adds custom attributes to the MetricsContext stored within the provided context.
-// It uses GetMetricsContext for lazy initialization if needed.
-// IMPORTANT: Because this might create a new context during lazy initialization,
-// the potentially updated context is returned and should be used by the caller afterwards.
-//
-// Parameters:
-//   - ctx: The current context.
-//   - attrs: A variadic list of attribute.KeyValue pairs to add.
-//
-// Returns:
-//   - context.Context: The potentially updated context containing the MetricsContext.
-func AddMetricAttributes(ctx context.Context, attrs ...attribute.KeyValue) {
-	mc := GetMetricsContext(ctx) // mc is guaranteed to be non-nil here
-	if mc == nil {
-		// Log error: context not initialized
+// AddAttribute adds a single custom attribute to the MetricContext. (Write operation)
+func (mc *MetricContext) AddAttribute(attr attribute.KeyValue) {
+	// Ensure the key is valid before proceeding
+	if attr.Key == "" {
 		return
 	}
 
-	for _, attr := range attrs {
-		// Store the attribute key (as string) and the attribute value in the sync.Map
-		// Ensure the key is valid before storing.
-		if attr.Key != "" {
-			mc.Attributes.Store(string(attr.Key), attr.Value)
+	mc.mu.Lock()         // Acquire exclusive write lock
+	defer mc.mu.Unlock() // Ensure lock is released
+
+	// Initialize map if it's nil (defensive check)
+	if mc.attributes == nil {
+		mc.attributes = make(map[string]attribute.Value)
+	}
+	mc.attributes[string(attr.Key)] = attr.Value
+}
+
+// GetAllAttributes retrieves all attributes from the MetricContext. (Read operation)
+func (mc *MetricContext) GetAllAttributes() []attribute.KeyValue {
+	mc.mu.RLock()         // Acquire shared read lock
+	defer mc.mu.RUnlock() // Ensure lock is released
+
+	if mc.attributes == nil {
+		return []attribute.KeyValue{} // Return empty slice if map is nil
+	}
+
+	// Pre-allocate slice for efficiency
+	attrs := make([]attribute.KeyValue, 0, len(mc.attributes))
+	for key, value := range mc.attributes {
+		attrs = append(attrs, attribute.KeyValue{
+			Key:   attribute.Key(key),
+			Value: value,
+		})
+	}
+	return attrs
+}
+
+// InitializeMetricsContext ensures a MetricContext is added to the request context.
+func InitializeMetricsContext(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if it already exists
+		if r.Context().Value(metricAttributesKey) == nil {
+			// Create a new MetricContext using the constructor
+			mc := newMetricContext() // Use the constructor
+			ctx := context.WithValue(r.Context(), metricAttributesKey, mc)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		} else {
+			next.ServeHTTP(w, r)
 		}
+	})
+}
+
+// GetMetricsContext retrieves the MetricContext from the request context.
+// Assumes InitializeMetricsContext middleware has run.
+func GetMetricsContext(ctx context.Context) *MetricContext {
+	if mc, ok := ctx.Value(metricAttributesKey).(*MetricContext); ok && mc != nil {
+		return mc
+	}
+	return nil
+}
+
+// AddMetricAttributes adds custom attributes to the MetricContext stored within the provided context.
+// It retrieves the context using GetMetricsContext.
+func AddMetricAttributes(ctx context.Context, attrs ...attribute.KeyValue) {
+	mc := GetMetricsContext(ctx)
+	if mc == nil {
+		// Log error or handle: context not initialized via middleware
+		// fmt.Println("Warning: MetricContext not found in context during AddMetricAttributes")
+		return
+	}
+
+	// Use the AddAttribute method which handles locking
+	for _, attr := range attrs {
+		mc.AddAttribute(attr) // Call the method on the struct
 	}
 }
 
-// GetAllAttributes retrieves all custom attributes stored in the MetricsContext within the given context.
-// It uses GetMetricsContext to ensure a MetricsContext exists (lazy initialization if needed)
-// before attempting to read attributes.
-//
-// Parameters:
-//   - ctx: The context from which to retrieve attributes.
-//
-// Returns:
-//   - []attribute.KeyValue: A slice of all attribute.KeyValue pairs found. Returns an empty slice
-//     if no attributes have been added.
+// GetMetricAttributes retrieves all custom attributes stored in the MetricContext within the given context.
 func GetMetricAttributes(ctx context.Context) []attribute.KeyValue {
-	mc := GetMetricsContext(ctx) // mc is guaranteed non-nil
+	mc := GetMetricsContext(ctx)
+	if mc == nil {
+		// Log error or handle: context not initialized via middleware
+		// fmt.Println("Warning: MetricContext not found in context during GetMetricAttributes")
+		return []attribute.KeyValue{} // Return empty slice
+	}
 
-	var attrs []attribute.KeyValue
-	mc.Attributes.Range(func(key, value any) bool {
-		// Type assert the key back to string and value back to attribute.Value
-		if keyStr, okKey := key.(string); okKey {
-			if val, okVal := value.(attribute.Value); okVal {
-				// Reconstruct the attribute.KeyValue
-				attrs = append(attrs, attribute.KeyValue{
-					Key:   attribute.Key(keyStr),
-					Value: val,
-				})
-			}
-		}
-		// Add logging here if type assertions fail unexpectedly
-		return true // Continue iterating
-	})
-
-	return attrs
+	// Use the GetAllAttributes method which handles locking
+	return mc.GetAllAttributes() // Call the method on the struct
 }
